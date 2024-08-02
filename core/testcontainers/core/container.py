@@ -136,7 +136,11 @@ class DockerContainer:
         #         return self.get_docker_client().bridge_ip(self._container.id)
         #     return gateway_ip
         return host
-
+    
+    def get_container_bridge_ip(self) -> str:
+        bridge_ip = self.get_docker_client().bridge_ip(self._container.id)
+        return bridge_ip
+    
     @wait_container_is_ready()
     def get_exposed_port(self, port: int) -> str:
         mapped_port = self.get_docker_client().port(self._container.id, port)
