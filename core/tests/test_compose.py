@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from re import split
 from time import sleep
@@ -5,6 +6,7 @@ from typing import Union
 from urllib.request import urlopen, Request
 
 import pytest
+from pytest_mock import MockerFixture
 
 from testcontainers.compose import DockerCompose, ContainerIsNotRunning, NoSuchPortExposed
 
@@ -147,6 +149,27 @@ def test_compose_logs():
         assert not line or container.Service in next(iter(line.split("|")), None)
 
 
+def test_compose_volumes():
+    _file_in_volume = "/var/lib/example/data/hello"
+    volumes = DockerCompose(context=FIXTURES / "basic_volume", keep_volumes=True)
+    with volumes:
+        stdout, stderr, exitcode = volumes.exec_in_container(
+            ["/bin/sh", "-c", f"echo hello > {_file_in_volume}"], "alpine"
+        )
+    assert exitcode == 0
+
+    # execute another time to confirm the file is still there, but we're not keeping the volumes this time
+    volumes.keep_volumes = False
+    with volumes:
+        stdout, stderr, exitcode = volumes.exec_in_container(["cat", _file_in_volume], "alpine")
+    assert exitcode == 0
+    assert "hello" in stdout
+
+    # third time we expect the file to be missing
+    with volumes, pytest.raises(subprocess.CalledProcessError):
+        volumes.exec_in_container(["cat", _file_in_volume], "alpine")
+
+
 # noinspection HttpUrlsUsage
 def test_compose_ports():
     # fairly straight forward - can we get the right port to request it
@@ -280,6 +303,45 @@ def test_exec_in_container_multiple():
         code, body = fetch(url)
         assert code == 200
         assert "test_exec_in_container" in body
+
+
+CONTEXT_FIXTURES = [pytest.param(ctx, id=ctx.name) for ctx in FIXTURES.iterdir()]
+
+
+@pytest.mark.parametrize("context", CONTEXT_FIXTURES)
+def test_compose_config(context: Path, mocker: MockerFixture) -> None:
+    compose = DockerCompose(context)
+    run_command = mocker.spy(compose, "_run_command")
+    expected_cmd = [*compose.compose_command_property, "config", "--format", "json"]
+
+    received_config = compose.get_config()
+
+    assert received_config
+    assert isinstance(received_config, dict)
+    assert "services" in received_config
+    assert run_command.call_args.kwargs["cmd"] == expected_cmd
+
+
+@pytest.mark.parametrize("context", CONTEXT_FIXTURES)
+def test_compose_config_raw(context: Path, mocker: MockerFixture) -> None:
+    compose = DockerCompose(context)
+    run_command = mocker.spy(compose, "_run_command")
+    expected_cmd = [
+        *compose.compose_command_property,
+        "config",
+        "--format",
+        "json",
+        "--no-path-resolution",
+        "--no-normalize",
+        "--no-interpolate",
+    ]
+
+    received_config = compose.get_config(path_resolution=False, normalize=False, interpolate=False)
+
+    assert received_config
+    assert isinstance(received_config, dict)
+    assert "services" in received_config
+    assert run_command.call_args.kwargs["cmd"] == expected_cmd
 
 
 def fetch(req: Union[Request, str]):
